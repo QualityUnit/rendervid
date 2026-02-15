@@ -111,10 +111,11 @@ export class BrowserRenderer {
     const container = document.createElement('div');
     container.style.cssText = `
       position: fixed;
-      left: -9999px;
-      top: -9999px;
+      left: 0;
+      top: 0;
       pointer-events: none;
-      visibility: hidden;
+      opacity: 0;
+      z-index: -1;
     `;
     document.body.appendChild(container);
     return container;

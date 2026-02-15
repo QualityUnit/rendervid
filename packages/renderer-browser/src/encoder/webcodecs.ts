@@ -24,6 +24,8 @@ export interface EncodedChunk {
   duration: number;
   /** Whether this is a keyframe */
   isKeyframe: boolean;
+  /** Encoder metadata (contains decoderConfig for first keyframe) */
+  meta?: EncodedVideoChunkMetadata;
 }
 
 export interface WebCodecsEncoder {
@@ -109,11 +111,30 @@ export function createWebCodecsEncoder(options: WebCodecsEncoderOptions): WebCod
       throw new Error('WebCodecs is not supported in this browser');
     }
 
-    // Check if the codec is supported
-    const support = await VideoEncoder.isConfigSupported(config);
-    if (!support.supported) {
-      throw new Error(`Codec ${codec} is not supported with the given configuration`);
+    // Try the requested config, then fall back to software acceleration and alternative codecs
+    const fallbackConfigs: VideoEncoderConfig[] = [
+      config,
+      { ...config, hardwareAcceleration: 'prefer-software' },
+      { ...config, codec: 'avc1.4d001f', hardwareAcceleration: 'prefer-software' }, // Main Profile
+      { ...config, codec: 'avc1.640028', hardwareAcceleration: 'prefer-software' }, // High Profile
+      { ...config, codec: 'vp09.00.10.08', hardwareAcceleration: 'prefer-software', avc: undefined }, // VP9
+    ];
+
+    let supportedConfig: VideoEncoderConfig | null = null;
+    for (const candidate of fallbackConfigs) {
+      const support = await VideoEncoder.isConfigSupported(candidate);
+      if (support.supported) {
+        supportedConfig = support.config!;
+        break;
+      }
     }
+
+    if (!supportedConfig) {
+      throw new Error(`No supported video codec found for ${width}x${height}`);
+    }
+
+    // Update config to the one that worked
+    Object.assign(config, supportedConfig);
 
     encoder = new VideoEncoder({
       output: (chunk, metadata) => {
@@ -125,6 +146,7 @@ export function createWebCodecsEncoder(options: WebCodecsEncoderOptions): WebCod
           timestamp: chunk.timestamp,
           duration: chunk.duration ?? frameDuration,
           isKeyframe: chunk.type === 'key',
+          meta: metadata,
         });
       },
       error: (error) => {
@@ -147,20 +169,33 @@ export function createWebCodecsEncoder(options: WebCodecsEncoderOptions): WebCod
 
     if (frame instanceof VideoFrame) {
       videoFrame = frame;
-    } else {
-      // Ensure canvas has a valid 2D context before creating VideoFrame
-      // (VideoFrame reads colorSpace from the context, which fails if context is null)
-      if (frame instanceof HTMLCanvasElement) {
-        const ctx = frame.getContext('2d');
-        if (!ctx) {
-          throw new Error(
-            'Cannot create VideoFrame: canvas has no 2D context. ' +
-            'This can happen if the canvas was created with a different context type (e.g., WebGL).'
-          );
-        }
+    } else if (frame instanceof HTMLCanvasElement) {
+      // Draw source canvas onto a fresh OffscreenCanvas to ensure valid pixel data
+      const offscreen = new OffscreenCanvas(width, height);
+      const ctx = offscreen.getContext('2d');
+      if (!ctx) {
+        throw new Error('Failed to get 2d context from OffscreenCanvas');
       }
+      ctx.drawImage(frame, 0, 0, width, height);
+      try {
+        videoFrame = new VideoFrame(offscreen, {
+          timestamp: timestamp * 1000,
+          duration: frameDuration,
+        });
+      } catch (e) {
+        // Fallback: try ImageData approach
+        const imageData = ctx.getImageData(0, 0, width, height);
+        videoFrame = new VideoFrame(imageData.data, {
+          format: 'RGBA',
+          codedWidth: width,
+          codedHeight: height,
+          timestamp: timestamp * 1000,
+          duration: frameDuration,
+        });
+      }
+    } else {
       videoFrame = new VideoFrame(frame, {
-        timestamp: timestamp * 1000, // Convert ms to microseconds
+        timestamp: timestamp * 1000,
         duration: frameDuration,
       });
     }

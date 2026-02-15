@@ -79,19 +79,12 @@ export function createMp4Muxer(options: MuxerOptions): VideoMuxer {
   let totalAudioBytes = 0;
 
   function addVideoChunk(chunk: EncodedChunk): void {
-    muxer.addVideoChunk(
-      {
-        type: chunk.isKeyframe ? 'key' : 'delta',
-        timestamp: chunk.timestamp,
-        duration: chunk.duration,
-        data: chunk.data,
-        byteLength: chunk.data.byteLength,
-        copyTo: (dest: BufferSource) => {
-          new Uint8Array(dest as ArrayBuffer).set(chunk.data);
-        },
-      } as EncodedVideoChunk,
-      undefined,
-      chunk.timestamp
+    muxer.addVideoChunkRaw(
+      chunk.data,
+      chunk.isKeyframe ? 'key' : 'delta',
+      chunk.timestamp,
+      chunk.duration,
+      chunk.meta,
     );
     totalVideoBytes += chunk.data.byteLength;
   }
