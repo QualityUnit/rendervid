@@ -13,6 +13,7 @@ import {
 } from './validation';
 import { getAllEasingNames } from './animation';
 import { getAllPresetNames, getPresetsByType } from './animation/presets';
+import React from 'react';
 
 /**
  * Engine options.
@@ -205,8 +206,37 @@ class DefaultComponentRegistry implements ComponentRegistry {
   }
 
   registerFromCode(name: string, code: string): void {
-    // Inline code execution would happen here
-    throw new Error(`Inline component loading not yet implemented: ${name}`);
+    let component: ComponentType | null = null;
+
+    if (code.includes('function') && code.includes('return')) {
+      const wrappedCode = `
+        return (function(React) {
+          ${code}
+          var match = ${JSON.stringify(code)}.match(/function\\s+(\\w+)/);
+          if (match) { try { return eval(match[1]); } catch(e) {} }
+          return null;
+        });
+      `;
+      const factory = new Function(wrappedCode);
+      component = factory()(React) as ComponentType;
+    } else if (code.includes('=>')) {
+      const wrappedCode = `
+        return (function(React) {
+          ${code}
+          var match = ${JSON.stringify(code)}.match(/(?:const|let|var)\\s+(\\w+)\\s*=/);
+          if (match) { try { return eval(match[1]); } catch(e) {} }
+          return null;
+        });
+      `;
+      const factory = new Function(wrappedCode);
+      component = factory()(React) as ComponentType;
+    }
+
+    if (component && typeof component === 'function') {
+      this.register(name, component);
+    } else {
+      throw new Error(`Failed to evaluate inline component "${name}": no valid function found`);
+    }
   }
 
   unregister(name: string): boolean {

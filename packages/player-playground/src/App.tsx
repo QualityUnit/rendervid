@@ -3,8 +3,10 @@ import type { Layer, InputDefinition, Template } from '@rendervid/core';
 import type { ThreeLayer as ThreeLayerType } from '@rendervid/core';
 import { exportAnimatedSvg } from '@rendervid/core';
 import { Player } from '@rendervid/player';
+import type { AudioLayer as AudioLayerType } from '@rendervid/core';
 import {
   ThreeLayer,
+  AudioLayer,
   createBrowserRenderer,
   downloadBlob,
   isWebCodecsSupported,
@@ -90,6 +92,7 @@ export function App() {
   const [speed, setSpeed] = useState(1);
   const [zoom, setZoom] = useState<ZoomMode>('fit');
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
+  const [isPlaying, setIsPlaying] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -204,6 +207,21 @@ export function App() {
           />
         );
       }
+      if (layer.type === 'audio') {
+        const scene = template.composition.scenes.find(
+          (s) => frame >= s.startFrame && frame < s.endFrame
+        );
+        const sceneDuration = scene ? scene.endFrame - scene.startFrame : totalFrames;
+        return (
+          <AudioLayer
+            layer={layer as AudioLayerType}
+            frame={frame}
+            fps={fps}
+            sceneDuration={sceneDuration}
+            isPlaying={isPlaying}
+          />
+        );
+      }
       if (layer.type === 'custom') {
         const customComponent = (layer as { customComponent?: { name: string; props?: Record<string, unknown> } }).customComponent;
         const Component = customComponent ? componentRegistry.get(customComponent.name) : undefined;
@@ -212,10 +230,11 @@ export function App() {
             (s) => frame >= s.startFrame && frame < s.endFrame
           );
           const sceneDuration = scene ? scene.endFrame - scene.startFrame : totalFrames;
+          const localFrame = scene ? frame - scene.startFrame - (layer.from ?? 0) : frame;
           return (
             <Component
               {...(customComponent.props ?? {})}
-              frame={frame}
+              frame={localFrame}
               fps={fps}
               sceneDuration={sceneDuration}
               layerSize={layer.size}
@@ -225,7 +244,7 @@ export function App() {
       }
       return null; // fall back to default rendering
     };
-  }, [template, componentRegistry]);
+  }, [template, componentRegistry, isPlaying]);
 
   if (!template) {
     return <div style={{ padding: 40, color: '#fff' }}>No templates found in examples/</div>;
@@ -306,8 +325,9 @@ export function App() {
                   console.log('[onFrameChange]', frame);
                 }
               }}
-              onPlayStateChange={(isPlaying) => {
-                console.log('[onPlayStateChange]', isPlaying);
+              onPlayStateChange={(playing) => {
+                setIsPlaying(playing);
+                console.log('[onPlayStateChange]', playing);
               }}
             />
           </div>

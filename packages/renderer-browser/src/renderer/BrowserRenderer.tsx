@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot, Root } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import type { Template, Scene, ComponentRegistry } from '@rendervid/core';
 import { getDefaultRegistry, TemplateProcessor, FontManager } from '@rendervid/core';
 import { TemplateRenderer, calculateTotalFrames } from './SceneRenderer';
@@ -111,10 +112,9 @@ export class BrowserRenderer {
     const container = document.createElement('div');
     container.style.cssText = `
       position: fixed;
-      left: 0;
-      top: 0;
+      left: -99999px;
+      top: -99999px;
       pointer-events: none;
-      opacity: 0;
       z-index: -9999;
     `;
     document.body.appendChild(container);
@@ -440,20 +440,19 @@ export class BrowserRenderer {
     };
   }
 
-  private renderFrame(
+  private async renderFrame(
     scenes: Scene[],
     frame: number,
     fps: number,
     width: number,
     height: number
   ): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.root) {
-        resolve();
-        return;
-      }
+    if (!this.root) return;
 
-      this.root.render(
+    // Force synchronous render — prevents concurrent mode from
+    // deferring the update and causing half-rendered frames
+    flushSync(() => {
+      this.root!.render(
         <TemplateRenderer
           scenes={scenes}
           frame={frame}
@@ -464,8 +463,10 @@ export class BrowserRenderer {
           registry={this.registry}
         />
       );
+    });
 
-      // Wait for React to flush
+    // Wait for browser to fully paint & compute CSS effects
+    await new Promise<void>((resolve) => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           resolve();
@@ -524,7 +525,7 @@ export class BrowserRenderer {
       const scene = scenes[sceneIndex];
       const { SceneRenderer } = await import('./SceneRenderer');
 
-      await new Promise<void>((resolve) => {
+      flushSync(() => {
         this.root!.render(
           <SceneRenderer
             scene={scene}
@@ -536,7 +537,9 @@ export class BrowserRenderer {
             registry={this.registry}
           />
         );
+      });
 
+      await new Promise<void>((resolve) => {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             resolve();

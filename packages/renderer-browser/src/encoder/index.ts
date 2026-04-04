@@ -1,5 +1,7 @@
 export {
   createFrameCapturer,
+  createForeignObjectCapturer,
+  createHtml2CanvasCapturer,
   createOffscreenCapturer,
   type CaptureOptions,
   type CaptureResult,

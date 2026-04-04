@@ -50,9 +50,11 @@ export class TemplateProcessor {
     const loadPromises: Promise<void>[] = [];
 
     for (const [name, definition] of Object.entries(template.customComponents)) {
-      // Skip if already registered
+      // Unregister first so each template's component code is always applied,
+      // even when multiple templates share the same component key (e.g. 'FlowHuntScene')
+      // across a shared global registry.
       if (registry.has(name)) {
-        continue;
+        registry.unregister(name);
       }
 
       loadPromises.push(this.loadComponent(name, definition, registry));
