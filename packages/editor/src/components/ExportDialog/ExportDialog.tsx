@@ -6,6 +6,7 @@ import {
   createGifEncoder,
   downloadBlob,
   isWebCodecsSupported,
+  RenderCancelledError,
   type RenderProgress,
   type BrowserRendererOptions,
 } from '@rendervid/renderer-browser';
@@ -18,7 +19,7 @@ export interface ExportDialogProps {
 }
 
 type ExportFormat = 'mp4' | 'webm' | 'svg' | 'gif';
-type ExportState = 'idle' | 'exporting' | 'done' | 'error';
+type ExportState = 'idle' | 'exporting' | 'done' | 'error' | 'cancelled';
 
 export function ExportDialog({ template, inputValues, onClose }: ExportDialogProps) {
   const [format, setFormat] = useState<ExportFormat>(isWebCodecsSupported() ? 'mp4' : 'webm');
@@ -27,13 +28,23 @@ export function ExportDialog({ template, inputValues, onClose }: ExportDialogPro
   const [error, setError] = useState<string | null>(null);
   const [resultSize, setResultSize] = useState<number>(0);
   const rendererRef = useRef<ReturnType<typeof createBrowserRenderer> | null>(null);
+  const cancelRequestedRef = useRef(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const webCodecsAvailable = isWebCodecsSupported();
+
+  const handleCancel = useCallback(() => {
+    cancelRequestedRef.current = true;
+    setIsCancelling(true);
+    rendererRef.current?.cancel();
+  }, []);
 
   const handleExport = useCallback(async () => {
     setState('exporting');
     setError(null);
     setProgress(null);
+    cancelRequestedRef.current = false;
+    setIsCancelling(false);
 
     try {
       const registry = buildRegistry(template.customComponents);
@@ -62,8 +73,12 @@ export function ExportDialog({ template, inputValues, onClose }: ExportDialogPro
       renderer.dispose();
       rendererRef.current = null;
     } catch (err) {
-      setState('error');
-      setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof RenderCancelledError || cancelRequestedRef.current) {
+        setState('cancelled');
+      } else {
+        setState('error');
+        setError(err instanceof Error ? err.message : String(err));
+      }
       rendererRef.current?.dispose();
       rendererRef.current = null;
     }
@@ -123,6 +138,8 @@ export function ExportDialog({ template, inputValues, onClose }: ExportDialogPro
     setState('exporting');
     setError(null);
     setProgress(null);
+    cancelRequestedRef.current = false;
+    setIsCancelling(false);
 
     try {
       const registry = buildRegistry(template.customComponents);
@@ -147,6 +164,7 @@ export function ExportDialog({ template, inputValues, onClose }: ExportDialogPro
       // Render each frame using the same pattern as video export
       // We need to use renderImage for each frame to get canvas data
       for (let frame = 0; frame < totalFrames; frame++) {
+        if (cancelRequestedRef.current) throw new RenderCancelledError();
         const frameStartTime = performance.now();
 
         // Render frame and get image blob
@@ -202,8 +220,12 @@ export function ExportDialog({ template, inputValues, onClose }: ExportDialogPro
       renderer.dispose();
       rendererRef.current = null;
     } catch (err) {
-      setState('error');
-      setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof RenderCancelledError || cancelRequestedRef.current) {
+        setState('cancelled');
+      } else {
+        setState('error');
+        setError(err instanceof Error ? err.message : String(err));
+      }
       rendererRef.current?.dispose();
       rendererRef.current = null;
     }
@@ -298,10 +320,16 @@ export function ExportDialog({ template, inputValues, onClose }: ExportDialogPro
         {state === 'exporting' && progress && (
           <div style={sectionStyle}>
             <div style={{ fontSize: '13px', color: '#ccc', marginBottom: '8px' }}>
-              {progress.phase === 'capturing' && `Rendering frames... ${progressPercent}%`}
-              {progress.phase === 'encoding' && 'Encoding...'}
-              {progress.phase === 'muxing' && 'Creating file...'}
-              {progress.phase === 'complete' && 'Complete!'}
+              {cancelRequestedRef.current
+                ? 'Cancelling...'
+                : (
+                  <>
+                    {progress.phase === 'capturing' && `Rendering frames... ${progressPercent}%`}
+                    {progress.phase === 'encoding' && 'Encoding...'}
+                    {progress.phase === 'muxing' && 'Creating file...'}
+                    {progress.phase === 'complete' && 'Complete!'}
+                  </>
+                )}
             </div>
 
             {/* Progress bar */}
@@ -313,12 +341,43 @@ export function ExportDialog({ template, inputValues, onClose }: ExportDialogPro
               <span>Frame {progress.currentFrame} / {progress.totalFrames}</span>
               {eta !== undefined && eta > 0 && <span>~{Math.ceil(eta)}s remaining</span>}
             </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
+              <button
+                onClick={handleCancel}
+                disabled={isCancelling}
+                style={{ ...cancelButtonStyle, opacity: isCancelling ? 0.5 : 1 }}
+              >
+                {isCancelling ? 'Cancelling…' : 'Cancel'}
+              </button>
+            </div>
           </div>
         )}
 
         {state === 'exporting' && !progress && (
           <div style={sectionStyle}>
-            <div style={{ fontSize: '13px', color: '#ccc' }}>Preparing...</div>
+            <div style={{ fontSize: '13px', color: '#ccc' }}>
+              {isCancelling ? 'Cancelling...' : 'Preparing...'}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
+              <button
+                onClick={handleCancel}
+                disabled={isCancelling}
+                style={{ ...cancelButtonStyle, opacity: isCancelling ? 0.5 : 1 }}
+              >
+                {isCancelling ? 'Cancelling…' : 'Cancel'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {state === 'cancelled' && (
+          <div style={sectionStyle}>
+            <div style={{ fontSize: '14px', color: '#fbbf24', marginBottom: '8px' }}>Export cancelled</div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+              <button onClick={() => setState('idle')} style={exportButtonStyle}>Try Again</button>
+              <button onClick={onClose} style={imageButtonStyle}>Close</button>
+            </div>
           </div>
         )}
 
@@ -440,6 +499,17 @@ const imageButtonStyle: React.CSSProperties = {
   backgroundColor: '#444',
   color: '#fff',
   border: 'none',
+  borderRadius: '6px',
+  cursor: 'pointer',
+};
+
+const cancelButtonStyle: React.CSSProperties = {
+  padding: '8px 18px',
+  fontSize: '12px',
+  fontWeight: 500,
+  backgroundColor: 'transparent',
+  color: '#f87171',
+  border: '1px solid #f87171',
   borderRadius: '6px',
   cursor: 'pointer',
 };

@@ -10,6 +10,18 @@ import { createMp4Muxer } from '../encoder/muxer';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type CustomComponentType = React.ComponentType<any>;
 
+/**
+ * Thrown by renderVideo() when the caller invokes BrowserRenderer.cancel()
+ * mid-render. Distinct error class so UIs can show "cancelled" instead of
+ * a generic failure.
+ */
+export class RenderCancelledError extends Error {
+  constructor(message = 'Render cancelled') {
+    super(message);
+    this.name = 'RenderCancelledError';
+  }
+}
+
 export interface BrowserRendererOptions {
   /** Target container element */
   container?: HTMLElement;
@@ -103,6 +115,7 @@ export class BrowserRenderer {
   private container: HTMLElement;
   private root: Root | null = null;
   private isRendering = false;
+  private cancelRequested = false;
   private registry: ComponentRegistry;
   private processor: TemplateProcessor;
 
@@ -160,6 +173,7 @@ export class BrowserRenderer {
     }
 
     this.isRendering = true;
+    this.cancelRequested = false;
 
     try {
       const { template, inputs = {}, format = 'mp4', bitrate, renderScale = 1, onProgress, onFrame } = options;
@@ -291,6 +305,7 @@ export class BrowserRenderer {
 
     // Render each frame
     for (let frame = 0; frame < totalFrames; frame++) {
+      if (this.cancelRequested) throw new RenderCancelledError();
       const frameStartTime = performance.now();
 
       // Render frame to DOM at native template dimensions
@@ -427,6 +442,10 @@ export class BrowserRenderer {
 
     // Render each frame
     for (let frame = 0; frame < totalFrames; frame++) {
+      if (this.cancelRequested) {
+        try { mediaRecorder.stop(); } catch { /* already stopped */ }
+        throw new RenderCancelledError();
+      }
       const frameStartTime = performance.now();
 
       // Render frame to DOM
@@ -667,6 +686,26 @@ export class BrowserRenderer {
       // Font loading failed, but we continue with fallbacks
       console.warn('[BrowserRenderer] Font loading failed, using fallbacks:', error);
     }
+  }
+
+  /**
+   * Request cancellation of the in-flight render. The per-frame loops in
+   * renderWithWebCodecs / renderWithMediaRecorder check this flag at the
+   * top of each iteration and bail out by throwing a RenderCancelledError,
+   * which the caller (ExportDialog) can catch to distinguish a user-cancel
+   * from an actual failure.
+   */
+  cancel(): void {
+    if (this.isRendering) {
+      this.cancelRequested = true;
+    }
+  }
+
+  /**
+   * Whether the renderer is currently producing frames.
+   */
+  isActive(): boolean {
+    return this.isRendering;
   }
 
   /**
