@@ -1,4 +1,5 @@
 import html2canvas from 'html2canvas';
+import { toCanvas as htmlToImageCanvas } from 'html-to-image';
 
 export interface CaptureOptions {
   /** Target element to capture */
@@ -252,33 +253,77 @@ export function createFrameCapturer(): FrameCapturer {
     const snapshots = snapshotWebGLCanvases(options.element);
 
     const scale = options.scale ?? 1;
-    // html2canvas treats `width`/`height` as the SOURCE area to capture and
-    // creates a canvas of (width*scale) × (height*scale). However when both
-    // width and scale are provided, content can end up rendering at 1:1 in the
-    // top-left of an oversized canvas. The reliable way to get a high-DPI
-    // capture is to omit width/height and rely on the element's bounding box,
-    // letting `scale` do all the DPI multiplication.
-    let canvas = await html2canvas(options.element, {
-      backgroundColor: options.backgroundColor ?? null,
-      scale,
-      useCORS: options.useCORS ?? true,
-      proxy: options.proxy,
-      logging: false,
-      allowTaint: false,
-      foreignObjectRendering: false,
-      imageTimeout: 15000,
-      removeContainer: true,
-      onclone: (_doc: Document, clonedElement: HTMLElement) => {
-        // Force the cloned root to be fully visible for capture, in case the
-        // live element is hidden / opacity:0 (e.g. an off-screen render
-        // container). html2canvas otherwise returns an empty canvas.
-        const cloneRoot = clonedElement as HTMLElement;
-        cloneRoot.style.opacity = '1';
-        cloneRoot.style.visibility = 'visible';
-        cloneRoot.style.display = 'block';
-        applyWebGLSnapshots(options.element, clonedElement, snapshots);
-      },
-    });
+    // Primary capture path: html-to-image's foreignObject SVG renderer.
+    // Unlike html2canvas (which re-implements CSS layout/paint and gets
+    // opacity, gradients, blend modes, and filters subtly wrong), this
+    // serialises the element subtree into an <foreignObject> inside an
+    // <svg> and rasterises via the browser's native renderer. The result
+    // matches what the user sees on screen pixel-for-pixel — no more
+    // washed-out crossfades or ghosted opacity transitions.
+    let canvas: HTMLCanvasElement;
+    try {
+      canvas = await htmlToImageCanvas(options.element, {
+        canvasWidth: Math.round(options.width * scale),
+        canvasHeight: Math.round(options.height * scale),
+        pixelRatio: scale,
+        backgroundColor: options.backgroundColor,
+        cacheBust: false,
+        skipFonts: false,
+        // Force the captured root to be fully visible — handles off-screen
+        // render containers that have opacity:0 / display:none / etc.
+        style: { opacity: '1', visibility: 'visible', display: 'block' },
+        // Skip preserving WebGL contexts — we snapshot them separately.
+        filter: () => true,
+      });
+      // html-to-image doesn't run an onclone callback, so apply WebGL
+      // snapshots after the fact by overlaying them on the produced canvas.
+      // (For most templates there are no canvases, so this is a no-op.)
+      if (snapshots.size > 0) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const liveCanvases = options.element.querySelectorAll('canvas');
+          const elementRect = options.element.getBoundingClientRect();
+          for (const original of liveCanvases) {
+            const snap = snapshots.get(original);
+            if (!snap) continue;
+            const r = original.getBoundingClientRect();
+            const off = document.createElement('canvas');
+            off.width = snap.width;
+            off.height = snap.height;
+            off.getContext('2d')?.putImageData(snap, 0, 0);
+            ctx.drawImage(
+              off,
+              (r.left - elementRect.left) * scale,
+              (r.top - elementRect.top) * scale,
+              r.width * scale,
+              r.height * scale,
+            );
+          }
+        }
+      }
+    } catch (err) {
+      // Fallback to html2canvas if foreignObject path fails (e.g. tainted
+      // images or other security restrictions on the page).
+      console.warn('[capturer] html-to-image failed, falling back to html2canvas:', err);
+      canvas = await html2canvas(options.element, {
+        backgroundColor: options.backgroundColor ?? null,
+        scale,
+        useCORS: options.useCORS ?? true,
+        proxy: options.proxy,
+        logging: false,
+        allowTaint: false,
+        foreignObjectRendering: false,
+        imageTimeout: 15000,
+        removeContainer: true,
+        onclone: (_doc: Document, clonedElement: HTMLElement) => {
+          const cloneRoot = clonedElement as HTMLElement;
+          cloneRoot.style.opacity = '1';
+          cloneRoot.style.visibility = 'visible';
+          cloneRoot.style.display = 'block';
+          applyWebGLSnapshots(options.element, clonedElement, snapshots);
+        },
+      });
+    }
 
     // Verify the canvas dims match the requested target. If html2canvas
     // produced something smaller (e.g. when the source element has zero
