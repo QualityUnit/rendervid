@@ -88,7 +88,13 @@ export function SceneRenderer({
         width,
         height,
         overflow: 'hidden',
-        backgroundColor: '#000000',
+        // No hardcoded background. The scene's own backgroundColor (if any)
+        // is spread in via backgroundStyle below; otherwise the container
+        // stays transparent and the parent (BrowserRenderer / template
+        // output bg) shows through. Hardcoding #000 here meant any layer
+        // with opacity < 1 composited against black, producing visibly
+        // washed-out / desaturated content during phase crossfades on
+        // light-themed templates.
         ...backgroundStyle,
       }}
     >
@@ -179,12 +185,14 @@ export function TemplateRenderer({
   }
 
   if (!currentScene) {
+    // Empty/no-scene fallback — keep transparent so the parent decides
+    // the canvas bg (was previously hardcoded #000, which forced a black
+    // tail on any export that ran past the last scene's endFrame).
     return (
       <div
         style={{
           width,
           height,
-          backgroundColor: '#000000',
         }}
       />
     );

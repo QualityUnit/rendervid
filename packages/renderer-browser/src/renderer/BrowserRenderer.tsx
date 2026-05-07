@@ -172,16 +172,26 @@ export class BrowserRenderer {
       await this.loadFonts(processedTemplate);
 
       const { width, height, fps = 30 } = processedTemplate.output;
+      // Capture-time background. If the template declares an output
+      // backgroundColor, use it; otherwise default to white. This is what
+      // html2canvas composites partially-transparent layers against — the
+      // previous implicit-null left an alpha canvas that the MP4 encoder
+      // back-filled with black, which made every opacity-driven crossfade
+      // visibly washed out / ghosted on light-themed templates.
+      const captureBg = (processedTemplate.output as { backgroundColor?: string }).backgroundColor || '#FFFFFF';
       const scenes = processedTemplate.composition.scenes;
       const totalFrames = calculateTotalFrames(scenes, fps);
       const duration = totalFrames / fps;
 
-      // Create render container
+      // Create render container. Give it the same opaque background as the
+      // capture-time bg so any uncovered pixel during reflow paints to it
+      // instead of bleeding through.
       const renderContainer = document.createElement('div');
       renderContainer.style.cssText = `
         width: ${width}px;
         height: ${height}px;
         overflow: hidden;
+        background: ${captureBg};
       `;
       this.container.appendChild(renderContainer);
 
@@ -200,7 +210,7 @@ export class BrowserRenderer {
         result = await this.renderWithWebCodecs(
           scenes,
           renderContainer,
-          { width, height, fps, totalFrames, duration, bitrate, renderScale },
+          { width, height, fps, totalFrames, duration, bitrate, renderScale, captureBg },
           capturer,
           onProgress,
           onFrame
@@ -209,7 +219,7 @@ export class BrowserRenderer {
         result = await this.renderWithMediaRecorder(
           scenes,
           renderContainer,
-          { width, height, fps, totalFrames, duration, renderScale },
+          { width, height, fps, totalFrames, duration, renderScale, captureBg },
           capturer,
           onProgress,
           onFrame
@@ -230,12 +240,12 @@ export class BrowserRenderer {
   private async renderWithWebCodecs(
     scenes: Scene[],
     container: HTMLElement,
-    config: { width: number; height: number; fps: number; totalFrames: number; duration: number; bitrate?: number; renderScale?: number },
+    config: { width: number; height: number; fps: number; totalFrames: number; duration: number; bitrate?: number; renderScale?: number; captureBg?: string },
     capturer: ReturnType<typeof createFrameCapturer>,
     onProgress?: (progress: RenderProgress) => void,
     onFrame?: (frame: number, totalFrames: number) => void
   ): Promise<VideoResult> {
-    const { width, height, fps, totalFrames, duration, bitrate, renderScale = 1 } = config;
+    const { width, height, fps, totalFrames, duration, bitrate, renderScale = 1, captureBg = '#FFFFFF' } = config;
 
     // Encoder/muxer dimensions are scaled (e.g. 1080p × 2 = 4K).
     // The DOM is still rendered at native (width, height); html2canvas
@@ -295,6 +305,7 @@ export class BrowserRenderer {
         width,
         height,
         scale: renderScale,
+        backgroundColor: captureBg,
       });
 
       // Encode frame
@@ -371,12 +382,12 @@ export class BrowserRenderer {
   private async renderWithMediaRecorder(
     scenes: Scene[],
     container: HTMLElement,
-    config: { width: number; height: number; fps: number; totalFrames: number; duration: number; renderScale?: number },
+    config: { width: number; height: number; fps: number; totalFrames: number; duration: number; renderScale?: number; captureBg?: string },
     capturer: ReturnType<typeof createFrameCapturer>,
     onProgress?: (progress: RenderProgress) => void,
     onFrame?: (frame: number, totalFrames: number) => void
   ): Promise<VideoResult> {
-    const { width, height, fps, totalFrames, duration, renderScale = 1 } = config;
+    const { width, height, fps, totalFrames, duration, renderScale = 1, captureBg = '#FFFFFF' } = config;
 
     const encWidth = Math.round(width * renderScale);
     const encHeight = Math.round(height * renderScale);
@@ -430,9 +441,16 @@ export class BrowserRenderer {
         width,
         height,
         scale: renderScale,
+        backgroundColor: captureBg,
       });
 
-      // Draw to MediaRecorder canvas
+      // Paint the recorder canvas to the capture-time bg first, then draw
+      // the captured frame on top. Without the fillRect, drawImage of a
+      // partially-transparent capture would composite over the previous
+      // frame's leftover pixels, leaving smear artefacts at element edges
+      // where opacity changes between frames.
+      ctx.fillStyle = captureBg;
+      ctx.fillRect(0, 0, encWidth, encHeight);
       ctx.drawImage(capturedCanvas, 0, 0, encWidth, encHeight);
 
       // Wait for frame timing
