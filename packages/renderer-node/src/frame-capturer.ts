@@ -294,6 +294,12 @@ export class FrameCapturer {
   private generateRenderHTML(): string {
     const { template, inputs = {}, registry } = this.config;
     const { width, height } = template.output;
+    // Use the template's declared output background as the page background.
+    // Falling back to black caused two visible bugs: (1) "greying" mid-crossfade,
+    // because both scenes alpha-blend over the body during a fade transition and
+    // the math only nets to white when the body is also white, (2) any
+    // momentary uncovered pixel during reflow paints as black for a frame.
+    const pageBg = template.output.backgroundColor || '#FFFFFF';
 
     // Serialize template and inputs for the renderer
     const templateJson = JSON.stringify(template);
@@ -314,18 +320,29 @@ export class FrameCapturer {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
+      /* Disable text selection globally — headless Chromium can leave a
+         residual selection state after setContent / font load / resize that
+         renders a blue selection-highlight rectangle BEHIND any element using
+         the gradient-text trick (-webkit-background-clip: text +
+         -webkit-text-fill-color: transparent). Killing selection at the source. */
+      -webkit-user-select: none !important;
+      user-select: none !important;
     }
+    /* Even if a selection somehow appears, make its highlight invisible. */
+    ::selection { background: transparent !important; color: inherit !important; }
+    ::-moz-selection { background: transparent !important; color: inherit !important; }
     html, body {
       width: ${width}px;
       height: ${height}px;
       overflow: hidden;
-      background: #000;
+      background: ${pageBg};
     }
     #root {
       width: ${width}px;
       height: ${height}px;
       position: relative;
       overflow: hidden;
+      background: ${pageBg};
     }
   </style>
 </head>

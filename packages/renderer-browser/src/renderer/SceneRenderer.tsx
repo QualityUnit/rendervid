@@ -267,8 +267,12 @@ function TransitionRenderer({
   const getTransitionStyle = (): React.CSSProperties => {
     switch (transitionType) {
       case 'fade': {
+        // Keep outgoing fully opaque; the incoming scene fades in on top.
+        // Fading both simultaneously (outgoing 1-p, incoming p) leaves
+        // 25% body-bg leakthrough at mid-transition (50% × 50% transparency
+        // stacked), producing a washed-out "ghost" frame.
         return {
-          opacity: 1 - progress,
+          opacity: 1,
         };
       }
       case 'slide': {
