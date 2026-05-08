@@ -423,7 +423,9 @@ export function VideoEditor({
               }}
               title="Go to start"
             >
-              ⏮
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 5h2v14H6zM9.5 12l10 7V5z" />
+              </svg>
             </button>
             <button
               onClick={togglePlay}
@@ -434,10 +436,21 @@ export function VideoEditor({
                 border: 'none',
                 borderRadius: '4px',
                 cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
               title="Play/Pause (Space)"
             >
-              {isPlaying ? '⏸' : '▶️'}
+              {isPlaying ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              )}
             </button>
             <button
               onClick={() => setCurrentFrame(totalFrames - 1)}
@@ -451,7 +464,9 @@ export function VideoEditor({
               }}
               title="Go to end"
             >
-              ⏭
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M16 5h2v14h-2zM4.5 19l10-7-10-7z" />
+              </svg>
             </button>
 
             <span style={{ fontSize: '12px', color: '#999', marginLeft: '8px' }}>

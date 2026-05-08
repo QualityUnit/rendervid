@@ -1,6 +1,7 @@
 export {
   BrowserRenderer,
   createBrowserRenderer,
+  RenderCancelledError,
   type BrowserRendererOptions,
   type RenderVideoOptions,
   type RenderImageOptions,

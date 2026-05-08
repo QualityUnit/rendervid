@@ -27,10 +27,11 @@
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "@rendervid/core": "workspace:*",
+    "@rendervid/physics": "workspace:*",
+    "html-to-image": "^1.11.13",
     "html2canvas": "^1.4.1",
     "mp4-muxer": "^5.2.2",
-    "three": "^0.163.0",
-    "@rendervid/physics": "workspace:*"
+    "three": "^0.163.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
