@@ -209,6 +209,31 @@ export function parseCubicBezier(value: string): EasingFunction | null {
   return createCubicBezier(x1, y1, x2, y2);
 }
 
+// Solves x(t) = ((2a * t + 3b) * t + 3c) * t = x for t, with x in (0, 1):
+// u = 1/t is the largest real root of x·u³ − 3c·u² − 3b·u − 2a = 0
+// (closed-form solver from https://github.com/gre/bezier-easing)
+function solveTForX(x: number, a: number, b: number, c: number): number {
+  const j = 1 / Math.max(c, Math.sqrt(x));
+  const k = x * j;
+  const l = k * j;
+  const s = c * j;
+  const q = b * l;
+  const m = s * s + q;
+  const h = -s * (s * s + 1.5 * q) - a * k * l;
+  const D = h * h - m * m * m;
+  let v: number;
+  if (m === 0 || D > 1e-12 * h * h) {
+    // one real root (Cardano)
+    const U = -Math.cbrt(h < 0 ? h - Math.sqrt(D) : h + Math.sqrt(D));
+    v = (U + m / U) || 0;
+  } else {
+    // three real roots, take the largest
+    const r = Math.sqrt(m);
+    v = 2 * r * Math.cos(Math.acos(Math.max(-1, Math.min(1, -h / (m * r)))) / 3);
+  }
+  return Math.min(1, k / (v + s));
+}
+
 /**
  * Create a cubic bezier easing function.
  */
@@ -218,95 +243,22 @@ export function createCubicBezier(
   x2: number,
   y2: number
 ): EasingFunction {
-  // Newton-Raphson iteration for finding t from x
-  const NEWTON_ITERATIONS = 4;
-  const NEWTON_MIN_SLOPE = 0.001;
-  const SUBDIVISION_PRECISION = 0.0000001;
-  const SUBDIVISION_MAX_ITERATIONS = 10;
+  if (x1 === y1 && x2 === y2) return linear;
 
-  const kSplineTableSize = 11;
-  const kSampleStepSize = 1.0 / (kSplineTableSize - 1.0);
-  const sampleValues = new Float32Array(kSplineTableSize);
-
-  function A(a1: number, a2: number) {
-    return 1.0 - 3.0 * a2 + 3.0 * a1;
-  }
-  function B(a1: number, a2: number) {
-    return 3.0 * a2 - 6.0 * a1;
-  }
-  function C(a1: number) {
-    return 3.0 * a1;
-  }
-
-  function calcBezier(t: number, a1: number, a2: number) {
-    return ((A(a1, a2) * t + B(a1, a2)) * t + C(a1)) * t;
-  }
-
-  function getSlope(t: number, a1: number, a2: number) {
-    return 3.0 * A(a1, a2) * t * t + 2.0 * B(a1, a2) * t + C(a1);
-  }
-
-  function binarySubdivide(x: number, a: number, b: number, mX1: number, mX2: number) {
-    let currentX: number;
-    let currentT: number;
-    let i = 0;
-    do {
-      currentT = a + (b - a) / 2.0;
-      currentX = calcBezier(currentT, mX1, mX2) - x;
-      if (currentX > 0.0) {
-        b = currentT;
-      } else {
-        a = currentT;
-      }
-    } while (Math.abs(currentX) > SUBDIVISION_PRECISION && ++i < SUBDIVISION_MAX_ITERATIONS);
-    return currentT;
-  }
-
-  function newtonRaphsonIterate(x: number, guessT: number, mX1: number, mX2: number) {
-    for (let i = 0; i < NEWTON_ITERATIONS; ++i) {
-      const currentSlope = getSlope(guessT, mX1, mX2);
-      if (currentSlope === 0.0) {
-        return guessT;
-      }
-      const currentX = calcBezier(guessT, mX1, mX2) - x;
-      guessT -= currentX / currentSlope;
-    }
-    return guessT;
-  }
-
-  // Pre-compute sample values
-  for (let i = 0; i < kSplineTableSize; ++i) {
-    sampleValues[i] = calcBezier(i * kSampleStepSize, x1, x2);
-  }
-
-  function getTForX(x: number) {
-    let intervalStart = 0.0;
-    let currentSample = 1;
-    const lastSample = kSplineTableSize - 1;
-
-    for (; currentSample !== lastSample && sampleValues[currentSample] <= x; ++currentSample) {
-      intervalStart += kSampleStepSize;
-    }
-    --currentSample;
-
-    const dist = (x - sampleValues[currentSample]) /
-      (sampleValues[currentSample + 1] - sampleValues[currentSample]);
-    const guessForT = intervalStart + dist * kSampleStepSize;
-
-    const initialSlope = getSlope(guessForT, x1, x2);
-    if (initialSlope >= NEWTON_MIN_SLOPE) {
-      return newtonRaphsonIterate(x, guessForT, x1, x2);
-    } else if (initialSlope === 0.0) {
-      return guessForT;
-    } else {
-      return binarySubdivide(x, intervalStart, intervalStart + kSampleStepSize, x1, x2);
-    }
-  }
+  // x(t) = ((2a * t + 3b) * t + 3c) * t, y(t) = ((ay * t + by) * t + cy) * t
+  const a = (3 * x1 - 3 * x2 + 1) / 2;
+  const b = x2 - 2 * x1;
+  const c = x1;
+  const ay = 3 * y1 - 3 * y2 + 1;
+  const by = 3 * (y2 - 2 * y1);
+  const cy = 3 * y1;
 
   return function bezierEasing(x: number): number {
-    if (x === 0) return 0;
-    if (x === 1) return 1;
-    return calcBezier(getTForX(x), y1, y2);
+    // x outside (0, 1) saturates to 0 / 1
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    const t = solveTForX(x, a, b, c);
+    return ((ay * t + by) * t + cy) * t;
   };
 }
 
